@@ -1,13 +1,7 @@
 package go722
 
-/*
-#include <stdint.h>
-#include "g722_codec.h"
-*/
-import "C"
 import (
-	"runtime"
-	"unsafe"
+	"math"
 )
 
 const (
@@ -23,64 +17,147 @@ const (
 	Rate48000   = 48000
 )
 
+type G722Band struct {
+	S   int
+	Sp  int
+	Sz  int
+	R   [3]int
+	A   [3]int
+	Ap  [3]int
+	P   [3]int
+	D   [7]int
+	B   [7]int
+	Bp  [7]int
+	Sg  [7]int
+	Nb  int
+	Det int
+}
+
 type G722Encoder struct {
-	ctx     *C.G722_ENC_CTX
-	options int
+	// TRUE if the operating in the special ITU test mode, with the band split filters disabled.
+	ItuTestMode bool
+	// TRUE if the G.722 data is packed.
+	Packed bool
+	// TRUE if decode to 8k samples/second.
+	EightK bool
+	// 6 for 48000kbps, 7 for 56000kbps, or 8 for 64000kbps.
+	BitsPerSample int
+
+	// Signal history for the QMF.
+	X [24]int
+
+	Band [2]G722Band
+
+	InBuffer  uint
+	InBits    int
+	OutBuffer uint
+	OutBits   int
 }
 
-type G722Decoder struct {
-	ctx     *C.G722_DEC_CTX
-	options int
+type G722Decoder G722Encoder
+
+// saturate limits the amplitude to the range of int16.
+func saturate(amp int32) int16 {
+	amp16 := int16(amp)
+	if int32(amp16) == amp {
+		return amp16
+	}
+	if amp > math.MaxInt16 {
+		return math.MaxInt16
+	}
+	return math.MinInt16
 }
 
-func NewG722Encoder(rate, options int) *G722Encoder {
-	ctx := C.g722_encoder_new(C.int(rate), C.int(options))
-	enc := &G722Encoder{ctx: (*C.G722_ENC_CTX)(ctx), options: options}
-	runtime.SetFinalizer(enc, func(ptr any) {
-		C.g722_encoder_destroy(ctx)
-	})
-	return enc
-}
+// block4 performs the Block 4 operations on the G722Band.
+func block4(band *G722Band, d int) {
+	var wd1, wd2, wd3 int
+	var i int
 
-func (g *G722Encoder) Encode(pcm []byte) (dst []byte) {
-	outbufLen := len(pcm)
-	if g.options&G722_SAMPLE_RATE_8000 == 0 {
-		outbufLen /= 2
+	// Block 4, RECONS
+	band.D[0] = d
+	band.R[0] = int(saturate(int32(band.S + d)))
+
+	// Block 4, PARREC
+	band.P[0] = int(saturate(int32(band.Sz + d)))
+
+	// Block 4, UPPOL2
+	for i = 0; i < 3; i++ {
+		band.Sg[i] = band.P[i] >> 15
+	}
+	wd1 = int(saturate(int32(band.A[1] << 2)))
+
+	wd2 = ifThenElse(band.Sg[0] == band.Sg[1], -wd1, wd1)
+	if wd2 > 32767 {
+		wd2 = 32767
+	}
+	wd3 = (wd2 >> 7) + ifThenElse(band.Sg[0] == band.Sg[2], 128, -128)
+	wd3 += (band.A[2] * 32512) >> 15
+	if wd3 > 12288 {
+		wd3 = 12288
+	} else if wd3 < -12288 {
+		wd3 = -12288
+	}
+	band.Ap[2] = wd3
+
+	// Block 4, UPPOL1
+	band.Sg[0] = band.P[0] >> 15
+	band.Sg[1] = band.P[1] >> 15
+	wd1 = ifThenElse(band.Sg[0] == band.Sg[1], 192, -192)
+	wd2 = (band.A[1] * 32640) >> 15
+
+	band.Ap[1] = int(saturate(int32(wd1 + wd2)))
+	wd3 = int(saturate(15360 - int32(band.Ap[2])))
+	if band.Ap[1] > wd3 {
+		band.Ap[1] = wd3
+	} else if band.Ap[1] < -wd3 {
+		band.Ap[1] = -wd3
 	}
 
-	outbuf := make([]byte, outbufLen)
-	n := C.g722_encode(unsafe.Pointer(g.ctx),
-		(*C.int16_t)(C.CBytes(pcm)),
-		C.int(outbufLen),
-		(*C.uint8_t)(unsafe.Pointer(&outbuf[0])))
-	if n < 0 {
-		return nil
+	// Block 4, UPZERO
+	wd1 = ifThenElse(d == 0, 0, 128)
+	band.Sg[0] = d >> 15
+	for i = 1; i < 7; i++ {
+		band.Sg[i] = band.D[i] >> 15
+		wd2 = ifThenElse(band.Sg[i] == band.Sg[0], wd1, -wd1)
+		wd3 = (band.B[i] * 32640) >> 15
+		band.Bp[i] = int(saturate(int32(wd2 + wd3)))
 	}
-	return outbuf[:n]
+
+	// Block 4, DELAYA
+	for i = 6; i > 0; i-- {
+		band.D[i] = band.D[i-1]
+		band.B[i] = band.Bp[i]
+	}
+
+	for i = 2; i > 0; i-- {
+		band.R[i] = band.R[i-1]
+		band.P[i] = band.P[i-1]
+		band.A[i] = band.Ap[i]
+	}
+
+	// Block 4, FILTEP
+	wd1 = int(saturate(int32(band.R[1] + band.R[1])))
+	wd1 = (band.A[1] * wd1) >> 15
+	wd2 = int(saturate(int32(band.R[2] + band.R[2])))
+	wd2 = (band.A[2] * wd2) >> 15
+	band.Sp = int(saturate(int32(wd1 + wd2)))
+
+	// Block 4, FILTEZ
+	band.Sz = 0
+	for i = 6; i > 0; i-- {
+		wd1 = int(saturate(int32(band.D[i] + band.D[i])))
+		band.Sz += (band.B[i] * wd1) >> 15
+	}
+	band.Sz = int(saturate(int32(band.Sz)))
+
+	// Block 4, PREDIC
+	band.S = int(saturate(int32(band.Sp + band.Sz)))
 }
 
-func NewG722Decoder(rate, options int) *G722Decoder {
-	ctx := C.g722_decoder_new(C.int(rate), C.int(options))
-	dec := &G722Decoder{ctx: (*C.G722_DEC_CTX)(ctx), options: options}
-	runtime.SetFinalizer(dec, func(ptr any) {
-		C.g722_decoder_destroy(ctx)
-	})
-	return dec
-}
-
-func (g *G722Decoder) Decode(src []byte) (pcm []byte) {
-	outbufLen := len(src)
-	if g.options&G722_SAMPLE_RATE_8000 == 0 {
-		outbufLen *= 2
+// ifThenElse is a helper function to replace ternary operator in C.
+func ifThenElse(condition bool, a, b int) int {
+	if condition {
+		return a
 	}
-
-	outbuf := make([]int16, outbufLen)
-	n := C.g722_decode(unsafe.Pointer(g.ctx),
-		(*C.uint8_t)(C.CBytes(src)),
-		C.int(len(src)),
-		(*C.int16_t)(unsafe.Pointer(&outbuf[0])))
-	if n < 0 {
-		return nil
-	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(&outbuf[0])), n*2)
+	return b
 }
