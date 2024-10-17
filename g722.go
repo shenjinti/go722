@@ -24,16 +24,18 @@ const (
 )
 
 type G722Encoder struct {
-	ctx *C.G722_ENC_CTX
+	ctx     *C.G722_ENC_CTX
+	options int
 }
 
 type G722Decoder struct {
-	ctx *C.G722_DEC_CTX
+	ctx     *C.G722_DEC_CTX
+	options int
 }
 
 func NewG722Encoder(rate, options int) *G722Encoder {
 	ctx := C.g722_encoder_new(C.int(rate), C.int(options))
-	enc := &G722Encoder{ctx: (*C.G722_ENC_CTX)(ctx)}
+	enc := &G722Encoder{ctx: (*C.G722_ENC_CTX)(ctx), options: options}
 	runtime.SetFinalizer(enc, func(ptr any) {
 		C.g722_encoder_destroy(ctx)
 	})
@@ -41,11 +43,16 @@ func NewG722Encoder(rate, options int) *G722Encoder {
 }
 
 func (g *G722Encoder) Encode(pcm []byte) (dst []byte) {
-	outbuf := make([]byte, len(pcm))
+	outbufLen := len(pcm)
+	if g.options&G722_SAMPLE_RATE_8000 == 0 {
+		outbufLen /= 2
+	}
+
+	outbuf := make([]byte, outbufLen)
 	n := C.g722_encode(unsafe.Pointer(g.ctx),
 		(*C.int16_t)(C.CBytes(pcm)),
-		C.int(len(pcm)),
-		(*C.uint8_t)(C.CBytes(outbuf)))
+		C.int(outbufLen),
+		(*C.uint8_t)(unsafe.Pointer(&outbuf[0])))
 	if n < 0 {
 		return nil
 	}
@@ -54,7 +61,7 @@ func (g *G722Encoder) Encode(pcm []byte) (dst []byte) {
 
 func NewG722Decoder(rate, options int) *G722Decoder {
 	ctx := C.g722_decoder_new(C.int(rate), C.int(options))
-	dec := &G722Decoder{ctx: (*C.G722_DEC_CTX)(ctx)}
+	dec := &G722Decoder{ctx: (*C.G722_DEC_CTX)(ctx), options: options}
 	runtime.SetFinalizer(dec, func(ptr any) {
 		C.g722_decoder_destroy(ctx)
 	})
@@ -62,13 +69,18 @@ func NewG722Decoder(rate, options int) *G722Decoder {
 }
 
 func (g *G722Decoder) Decode(src []byte) (pcm []byte) {
-	outbuf := make([]byte, len(src)*2) // Assuming the decoded output is larger
+	outbufLen := len(src)
+	if g.options&G722_SAMPLE_RATE_8000 == 0 {
+		outbufLen *= 2
+	}
+
+	outbuf := make([]int16, outbufLen)
 	n := C.g722_decode(unsafe.Pointer(g.ctx),
 		(*C.uint8_t)(C.CBytes(src)),
 		C.int(len(src)),
-		(*C.int16_t)(C.CBytes(outbuf)))
+		(*C.int16_t)(unsafe.Pointer(&outbuf[0])))
 	if n < 0 {
 		return nil
 	}
-	return outbuf[:n]
+	return unsafe.Slice((*byte)(unsafe.Pointer(&outbuf[0])), n*2)
 }

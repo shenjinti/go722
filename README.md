@@ -8,6 +8,7 @@ go get github.com/shenjinti/go722
 ```
 
 ## Usage Example
+
 ```go
 func TestEncoder(t *testing.T) {
 	encoder := NewG722Encoder(Rate64000, G722_DEFAULT)
@@ -17,6 +18,7 @@ func TestEncoder(t *testing.T) {
 	assert.Equal(t, 80, len(g722Bytes))
 
 }
+
 func TestDecoder(t *testing.T) {
 	encoder := NewG722Decoder(Rate64000, G722_DEFAULT)
 	g722Bytes := make([]byte, 80)
@@ -24,5 +26,4 @@ func TestDecoder(t *testing.T) {
 	assert.NotNil(t, pcm)
 	assert.Equal(t, 160, len(pcm))
 }
-
 ```
