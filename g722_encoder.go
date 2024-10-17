@@ -126,7 +126,11 @@ func g722Encode(s *G722Encoder, amp []int16, length int, g722Data []byte) int {
 		el = int(saturate(int32(xlow - s.Band[0].S)))
 
 		// Block 1L, QUANTL
-		wd = ifThenElse(el >= 0, el, -(el + 1))
+		if el >= 0 {
+			wd = el
+		} else {
+			wd = -(el + 1)
+		}
 
 		for i = 1; i < 30; i++ {
 			wd1 = (q6[i] * s.Band[0].Det) >> 12
@@ -134,7 +138,12 @@ func g722Encode(s *G722Encoder, amp []int16, length int, g722Data []byte) int {
 				break
 			}
 		}
-		ilow = ifThenElse(el < 0, iln[i], ilp[i])
+
+		if el < 0 {
+			ilow = iln[i]
+		} else {
+			ilow = ilp[i]
+		}
 
 		// Block 2L, INVQAL
 		ril = ilow >> 2
@@ -171,10 +180,25 @@ func g722Encode(s *G722Encoder, amp []int16, length int, g722Data []byte) int {
 			eh = int(saturate(int32(xhigh - s.Band[1].S)))
 
 			// Block 1H, QUANTH
-			wd = ifThenElse(eh >= 0, eh, -(eh + 1))
+
+			if eh >= 0 {
+				wd = eh
+			} else {
+				wd = -(eh + 1)
+			}
 			wd1 = (564 * s.Band[1].Det) >> 12
-			mih = ifThenElse(wd >= wd1, 2, 1)
-			ihigh = ifThenElse(eh < 0, ihn[mih], ihp[mih])
+
+			if wd >= wd1 {
+				mih = 2
+			} else {
+				mih = 1
+			}
+
+			if eh < 0 {
+				ihigh = ihn[mih]
+			} else {
+				ihigh = ihp[mih]
+			}
 
 			// Block 2H, INVQAH
 			wd2 = qm2[ihigh]

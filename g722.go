@@ -86,11 +86,20 @@ func block4(band *G722Band, d int) {
 	}
 	wd1 = int(saturate(int32(band.A[1] << 2)))
 
-	wd2 = ifThenElse(band.Sg[0] == band.Sg[1], -wd1, wd1)
+	if band.Sg[0] == band.Sg[1] {
+		wd2 = -wd1
+	} else {
+		wd2 = wd1
+	}
 	if wd2 > 32767 {
 		wd2 = 32767
 	}
-	wd3 = (wd2 >> 7) + ifThenElse(band.Sg[0] == band.Sg[2], 128, -128)
+	wd3 = (wd2 >> 7)
+	if band.Sg[0] == band.Sg[2] {
+		wd3 += 128
+	} else {
+		wd3 -= 128
+	}
 	wd3 += (band.A[2] * 32512) >> 15
 	if wd3 > 12288 {
 		wd3 = 12288
@@ -102,7 +111,11 @@ func block4(band *G722Band, d int) {
 	// Block 4, UPPOL1
 	band.Sg[0] = band.P[0] >> 15
 	band.Sg[1] = band.P[1] >> 15
-	wd1 = ifThenElse(band.Sg[0] == band.Sg[1], 192, -192)
+	if band.Sg[0] == band.Sg[1] {
+		wd1 = 192
+	} else {
+		wd1 = -192
+	}
 	wd2 = (band.A[1] * 32640) >> 15
 
 	band.Ap[1] = int(saturate(int32(wd1 + wd2)))
@@ -114,11 +127,19 @@ func block4(band *G722Band, d int) {
 	}
 
 	// Block 4, UPZERO
-	wd1 = ifThenElse(d == 0, 0, 128)
+	if d == 0 {
+		wd1 = 0
+	} else {
+		wd1 = 128
+	}
 	band.Sg[0] = d >> 15
 	for i = 1; i < 7; i++ {
 		band.Sg[i] = band.D[i] >> 15
-		wd2 = ifThenElse(band.Sg[i] == band.Sg[0], wd1, -wd1)
+		if band.Sg[i] == band.Sg[0] {
+			wd2 = wd1
+		} else {
+			wd2 = -wd1
+		}
 		wd3 = (band.B[i] * 32640) >> 15
 		band.Bp[i] = int(saturate(int32(wd2 + wd3)))
 	}
@@ -152,12 +173,4 @@ func block4(band *G722Band, d int) {
 
 	// Block 4, PREDIC
 	band.S = int(saturate(int32(band.Sp + band.Sz)))
-}
-
-// ifThenElse is a helper function to replace ternary operator in C.
-func ifThenElse(condition bool, a, b int) int {
-	if condition {
-		return a
-	}
-	return b
 }
