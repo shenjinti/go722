@@ -1,10 +1,8 @@
 package go722
 
-import "unsafe"
-
 func NewG722Decoder(rate, options int) *G722Decoder {
 	dec := &G722Decoder{}
-	if rate == Rate64000 {
+	if rate == Rate48000 {
 		dec.BitsPerSample = 6
 	} else if rate == Rate56000 {
 		dec.BitsPerSample = 7
@@ -32,7 +30,12 @@ func (dec *G722Decoder) Decode(src []byte) (pcm []byte) {
 	if n < 0 {
 		return nil
 	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(&outbuf[0])), n*2)
+	pcm = make([]byte, n*2)
+	for i := 0; i < n; i++ {
+		pcm[i*2] = byte(outbuf[i])
+		pcm[i*2+1] = byte(outbuf[i] >> 8)
+	}
+	return pcm
 }
 
 // g722Decode decodes the given G.722 data to PCM samples.

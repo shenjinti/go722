@@ -1,7 +1,5 @@
 package go722
 
-import "unsafe"
-
 func NewG722Encoder(rate, options int) *G722Encoder {
 	enc := &G722Encoder{}
 	if rate == Rate48000 {
@@ -28,7 +26,11 @@ func (enc *G722Encoder) Encode(pcm []byte) (dst []byte) {
 		outbufLen /= 2
 	}
 	outbuf := make([]byte, outbufLen)
-	pcm16s := unsafe.Slice((*int16)(unsafe.Pointer(&pcm[0])), len(pcm)/2)
+	//
+	pcm16s := make([]int16, len(pcm)/2)
+	for i := 0; i < len(pcm16s); i++ {
+		pcm16s[i] = int16(pcm[i*2]) | int16(pcm[i*2+1])<<8
+	}
 	n := g722Encode(enc, pcm16s, len(pcm16s), outbuf)
 	if n < 0 {
 		return nil
